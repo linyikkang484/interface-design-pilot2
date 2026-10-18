@@ -13,4 +13,4 @@
 .matrix tr.question-missing td{background:#fff2ef!important}
 .matrix tr.question-missing td:first-child:after{content:' Required — please select 1–7';display:block;color:#93372c;font-size:12px;font-weight:600;margin-top:5px}
 .wtp-row.question-missing{padding:10px 12px;background:#fff2ef;outline:1px solid #d28b80;outline-offset:3px}
-.wtp-row.question-missing:after{content:'Required — enter an amount (0 is valid) or select Prefer not to answer';width:100%;font-size:12px;color:#93372c;font-weight:600}
+.wtp-row.question-missing:after{content:'Required — enter an amount in US dollars (0 is valid)';width:100%;font-size:12px;color:#93372c;font-weight:600}

@@ -1,9 +1,9 @@
-/* New study controller. No legacy storage, endpoint, assignments, or dataset is read. */
+/* Integrated A/B flow: consent -> one assigned website -> required survey -> confirmed receipt. */
 (function(){
 'use strict';
-const ENTRY_REVISION='wtp-required-20261019-02';
+const ENTRY_REVISION='integrated-ab-20261019-03';
 const cfg=window.STUDY_CONFIG,Q=window.QUESTIONNAIRE,root=document.getElementById('app');
-const p=new URLSearchParams(location.search),preview=p.get('preview')==='1',isTest=preview||p.get('test')==='1',design=preview&&p.get('flow')!=='1';
+const p=new URLSearchParams(location.search),preview=p.get('preview')==='1',isTest=preview||p.get('test')==='1';
 const force=isTest?String(p.get('condition')||p.get('cond')||'').toUpperCase():'';
 const NS='AMELINE_PILOT2_CLEAN|'+cfg.dataNamespace+'|'+(preview?'preview':isTest?'test':'real')+'|';
 const urlPid=p.get('PROLIFIC_PID')||'';
@@ -58,32 +58,48 @@ function consent(){shell('<h1>Introduction and consent</h1>'+
  '<h2>Before you begin</h2><p>Explore the Bonbon Mini presentation in the displayed order, including its shape, details and four available colors. You may click any color card to open the Bonbon Mini product page.</p>'+ 
  '<p>Review the product page and select “Continue to questions.” Your answers will refer to the Bonbon Mini in the color you have selected. You do not need to add anything to a bag, check out or create an account.</p>'+ 
  '<div class="actions"><span></span><button id="start" class="primary">START BROWSING →</button></div>','Page 01 of 03');
+ ['assets/home-photo.webp','assets/collection-photo.webp'].concat(STIMULUS.colors.map(c=>c.image)).forEach(src=>{const img=new Image();img.src=src;});
  document.getElementById('start').onclick=()=>{if(document.getElementById('consent-no').checked){shell('<h1>Thank you</h1><p>You chose not to take part. No study session has been created. Please return the study on Prolific.</p>','Not participating');return;}start();};
 }
-async function request(action,extra,maxAttempts){if(!cfg.apiUrl)throw new Error('No backend is configured.');
+async function request(action,extra,maxAttempts){
+ if(!cfg.apiUrl)throw new Error('No backend is configured.');
  const payload=Object.assign({study_id:cfg.studyId,build:cfg.build,data_schema:cfg.dataSchema,data_namespace:cfg.dataNamespace,action,is_test:S.isTest,client_key:S.clientKey,response_id:S.responseId,prolific_pid:S.pid},extra||{});
- let err;const began=Date.now();
+ // Identical payload on every transport retry. Only one request per browser is in flight.
+ const body=JSON.stringify(payload),began=Date.now(),budget=maxAttempts>1?60000:22000;
+ let err;
  for(let i=0;i<(maxAttempts||1);i++){
-  const ctrl=new AbortController(),to=setTimeout(()=>ctrl.abort(),18000);
-  try{const r=await fetch(cfg.apiUrl,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload),credentials:'omit',redirect:'follow',signal:ctrl.signal});
-   if(!r.ok)throw new Error('HTTP '+r.status);
-   const j=await r.json();if(j.study_id!==cfg.studyId||j.data_schema!==cfg.dataSchema||j.data_namespace!==cfg.dataNamespace)throw Object.assign(new Error('The endpoint belongs to a different study. Contact the researcher; do not change your ID.'),{permanent:true});
-   if(!j.ok)throw Object.assign(new Error(j.message||j.error||'Save failed'),{permanent:!j.retry,retryAfter:j.retry_after_ms});
+  const remaining=budget-(Date.now()-began);if(remaining<=0)break;
+  const ctrl=new AbortController(),to=setTimeout(()=>ctrl.abort(),Math.min(22000,remaining));
+  try{
+   const r=await fetch(cfg.apiUrl,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body,credentials:'omit',redirect:'follow',signal:ctrl.signal});
+   if(!r.ok)throw Object.assign(new Error('The server returned HTTP '+r.status+'.'),{code:'http_'+r.status});
+   const j=await r.json();
+   if(j.study_id!==cfg.studyId||j.data_schema!==cfg.dataSchema||j.data_namespace!==cfg.dataNamespace)throw Object.assign(new Error('The website and study server do not match. Please contact the researcher; do not change your ID.'),{permanent:true,code:'study_mismatch'});
+   if(!j.ok)throw Object.assign(new Error(j.message||j.error||'Save failed'),{permanent:!j.retry,retryAfter:j.retry_after_ms,code:j.error});
+   if(j.service_revision!==cfg.requiredServiceRevision||j.required_policy!=='wtp-numeric-required-20261019-02')throw Object.assign(new Error('The researcher has not yet published the matching integrated A/B backend. Keep this tab open and contact the researcher.'),{permanent:true,code:'service_version'});
    return j;
-  }catch(e){err=e;if(e.permanent||i===(maxAttempts||1)-1||Date.now()-began>30000)break;await new Promise(resolve=>setTimeout(resolve,e.retryAfter||1500+Math.random()*2500));}
-  finally{clearTimeout(to);}
+  }catch(e){
+   err=e;
+   if(e.permanent||i===(maxAttempts||1)-1)break;
+  }finally{clearTimeout(to);}
+  const delay=Math.max(err&&err.retryAfter||0,Math.min(10000,1000*Math.pow(2,i))*(0.6+Math.random()*0.8));
+  if(Date.now()-began+delay>=budget)break;
+  if(action==='start')msg('The server is busy confirming your session. Retrying safely; please keep this tab open…');
+  else if(closing)msg('Your final save is still awaiting confirmation. Retrying safely; please keep this tab open…');
+  await new Promise(resolve=>setTimeout(resolve,delay));
  }
- throw new Error(err&&err.name==='AbortError'?'The server has not confirmed this request. Keep this tab open and try again; do not restart under another ID.':err.message);
+ const message=err&&err.name==='AbortError'?'The server has not confirmed this request yet. Your original progress is retained in this browser. Retry from this tab.':err&&err.message||'The server has not confirmed this request. Retry from this tab.';
+ throw Object.assign(new Error(message),{code:err&&err.code||'network',permanent:!!(err&&err.permanent)});
 }
 async function start(){const go=document.getElementById('start');if(!document.getElementById('consent-check').checked){msg('Please confirm consent before starting.','error');return;}
- let pid=document.getElementById('pid').value.trim();if(!pid&&isTest)pid='TEST-'+uuid();
+ let pid=document.getElementById('pid').value.trim();if(!pid&&isTest){pid='TEST-'+uuid();document.getElementById('pid').value=pid;}
  if(!pid||pid.length>64||(!isTest&&!/^[a-zA-Z0-9_-]+$/.test(pid))){msg('A valid participant ID is required.','error');return;}
  S=load(pid)||newState(pid);persist();if(!localOK){msg('Browser storage is not available. Please contact the researcher rather than starting in another browser.','error');return;}
  go.disabled=true;msg('Creating or restoring your study session…');
  if(!await tabLock()){go.disabled=false;msg('This session is already open in another tab. Continue there or close it before retrying.','error');return;}
  try{
   if(preview){if(S.condition===null)S.condition=force==='B'?1:force==='A'?0:(Math.random()<.5?0:1);S.responseId=S.responseId||'PREVIEW-'+uuid();}
-  else {const r=await request('start',{consent:1,force_condition:force==='A'?0:force==='B'?1:null},3);
+  else {const r=await request('start',{consent:1,force_condition:force==='A'?0:force==='B'?1:null},6);
    S.responseId=r.response_id;S.condition=r.condition;S.ack=Math.max(S.ack||0,r.ack||0);
    if((r.pending_local_retry||r.resume_requires_original)&&!S.trace){throw new Error('The saved session needs its original tab and locally retained progress. Please contact the researcher; do not change your ID or repeat the browsing task.');}
    if(r.snapshot&&(!S.trace||r.revision>S.revision)) restoreServerSnapshot(r);
@@ -145,7 +161,8 @@ function questionPage(){const n=S.qpage===3?3:2;S.qpage=n;let body='';
  };
  const form=root.querySelector('.study-shell');form.onchange=readPage;form.oninput=readPage;
  const b=document.getElementById('back');if(b)b.onclick=()=>{if(closing)return;readPage();S.qpage=2;changed();persist();T.log('questionnaire_page',{page:2});questionPage();};
- document.getElementById('next').onclick=()=>{readPage();const missing=validatePage(n);if(missing.length){showRequiredErrors(missing,n);return;}if(n===3){const earlier=validatePage(2);if(earlier.length){S.qpage=2;changed();persist();questionPage();showRequiredErrors(earlier,2);return;}finish();return;}S.qpage=3;T.log('questionnaire_page',{page:3});changed();persist();questionPage();};
+ document.getElementById('next').onclick=()=>{if(S.submissionFrozen){finish();return;}readPage();const missing=validatePage(n);if(missing.length){showRequiredErrors(missing,n);return;}if(n===3){const earlier=validatePage(2);if(earlier.length){S.qpage=2;changed();persist();questionPage();showRequiredErrors(earlier,2);return;}finish();return;}S.qpage=3;T.log('questionnaire_page',{page:3});changed();persist();questionPage();};
+ if(S.submissionFrozen){setSubmitting(false);msg('A final submission is awaiting confirmation. Retry it from this tab; answers have not been cleared.','error');}
 }
 function validatePage(page){return Q.filter(q=>q.page===page).filter(q=>{const v=S.answers[q.id];if(q.type==='number'){return !(typeof v==='number'&&Number.isFinite(v)&&v>=0&&S.answers[q.refusalKey]!==1);}
   return !(typeof v==='number'&&Number.isInteger(v)&&v>=1&&v<=7);}).map(q=>q.id);}
@@ -158,23 +175,96 @@ function showRequiredErrors(missing,page){const warning=root.querySelector('#val
 
 function snapshot(){const ts=T.snapshot();const traceCopy=JSON.parse(JSON.stringify(T.s));delete traceCopy.events;return {phase:S.phase,qpage:S.qpage,color:S.color,answers:JSON.parse(JSON.stringify(S.answers)),trace:traceCopy,summary:ts,technicalText:S.technicalText||'',survey_elapsed_ms:S.surveyStartedAt?(S.surveyBaseMs||0)+Date.now()-S.surveyStartedAt:null,surveyStartedAt:S.surveyStartedAt||null,route:S.route,storeStarted:S.storeStarted,revision:S.revision,total_events:(T.s.eventsBase||0)+T.s.events.length};}
 function nextBatch(){const arr=T.s.events.filter(e=>e.seq>(S.ack||0));let batch=[],size=2;for(const e of arr){const len=JSON.stringify(e).length+1;if(batch.length>=100||size+len>30000)break;batch.push(e);size+=len;}return batch;}
-async function sync(urgent,action){if(preview){S.dirty=false;return {ok:true,preview:true};}if(!S||!S.responseId)return;if(netPromise){await netPromise;if(!urgent)return;}
- // Every frozen network snapshot receives a unique monotone number; retries reuse its payload.
- S.revision=Math.max(S.revision||0,revisionSent||0)+1;persist();
- const snap=snapshot(),rev=S.revision,events=nextBatch();
- netPromise=request(action||'save',{revision:rev,snapshot:snap,events},urgent?3:1).then(r=>{S.ack=Math.max(S.ack||0,r.ack||0);revisionSent=Math.max(revisionSent,r.revision||0,rev);if(S.revision===rev&&!r.stale)S.dirty=false;else S.dirty=true;persist();if(S.phase==='survey'&&!closing)msg(S.revision===rev&&!r.stale?'Answers saved.':'Earlier progress synced; recent changes remain in this browser.',S.revision===rev&&!r.stale?'ok':'');return r;});
+function finalPacketPending(){return !!(S&&S.pendingRequest&&['finish','withdraw'].includes(S.pendingRequest.action));}
+function packetFor(action){
+ S.revision=Math.max(S.revision||0,revisionSent||0)+1;
+ const packet={action,extra:{revision:S.revision,snapshot:snapshot(),events:nextBatch()}};
+ S.pendingRequest=packet;persist();return packet;
+}
+async function sendPacket(packet,urgent){
+ try{
+  const r=await request(packet.action,packet.extra,urgent?6:1);
+  S.ack=Math.max(S.ack||0,r.ack||0);revisionSent=Math.max(revisionSent,r.revision||0,packet.extra.revision);
+  const unchanged=S.revision===packet.extra.revision;
+  S.dirty=!(unchanged&&!r.stale);
+  if(S.pendingRequest===packet)delete S.pendingRequest;
+  if(r.status==='completed'||r.status==='withdrawn'){S.phase=r.status==='completed'?'done':'withdrawn';S.dirty=false;}
+  persist();
+  if(S.phase==='survey'&&!closing)msg(!S.dirty?'Answers saved.':'Earlier progress synced; recent changes remain in this browser.',!S.dirty?'ok':'');
+  return r;
+ }catch(e){
+  // Validation errors happen before writes. They can be corrected locally.
+  // Network/partial-write failures retain the exact packet for an idempotent retry.
+  const correction=['required_answers','invalid','invalid_route','invalid_color','incomplete_task','invalid_events'];
+  if(correction.includes(e.code)){delete S.pendingRequest;S.submissionFrozen=false;persist();}
+  throw e;
+ }
+}
+async function sync(urgent,action){
+ if(preview){S.dirty=false;return {ok:true,preview:true};}
+ if(!S||!S.responseId)return;
+ if(netPromise){try{await netPromise;}catch(e){if(!urgent)throw e;}if(!urgent)return;}
+ const desired=action||'save';
+ netPromise=(async()=>{
+  if(S.pendingRequest){
+   const pending=S.pendingRequest,r=await sendPacket(pending,urgent);
+   if(r.status==='completed'||r.status==='withdrawn'||!urgent||pending.action===desired)return r;
+  }
+  return sendPacket(packetFor(desired),urgent);
+ })();
  try{return await netPromise;}finally{netPromise=null;}
 }
 let backgroundTimer;
-function scheduleSync(){if(!S||['done','withdrawn'].includes(S.phase))return;clearTimeout(backgroundTimer);backgroundTimer=setTimeout(async()=>{if(S&&!closing&&S.phase!=='done'&&(S.dirty||nextBatch().length)){try{await sync(false);}catch(e){msg('Not yet synced. You may keep answering; keep this tab open.','error');}}if(S&&!['done','withdrawn'].includes(S.phase))scheduleSync();},(Math.max(60,cfg.backgroundSyncSeconds||75)+Math.random()*20)*1000);}
-async function finish(){if(closing)return;for(const pg of [2,3]){const missing=validatePage(pg);if(missing.length){if(S.qpage!==pg){S.qpage=pg;changed();persist();questionPage();}showRequiredErrors(missing,pg);return;}}closing=true;document.getElementById('next').disabled=true;const back=document.getElementById('back');if(back)back.disabled=true;
- root.querySelectorAll('.study-shell input,.clear-answer').forEach(e=>e.disabled=true);
- T.stop();T.log('submit_attempt');changed();persist();clearTimeout(backgroundTimer);msg('Submitting your answers and route record. Please keep this tab open…');
- try{if(preview){donePreview();return;}if(netPromise){try{await netPromise;}catch(e){/* retry full current snapshot below */}}
-  let rounds=0;while(nextBatch().length < T.s.events.filter(e=>e.seq>(S.ack||0)).length){if(++rounds>300)throw new Error('The event record is unusually long. Please contact the researcher.');await sync(true);}
-  const r=await sync(true,'finish');if(!r||r.status!=='completed')throw new Error('No final confirmation was returned.');S.phase='done';S.dirty=false;persist();if(releaseTabLock)releaseTabLock();
-  if(!isTest&&canRedirect()){location.assign(cfg.completionUrl);}else done();
- }catch(e){closing=false;root.querySelectorAll('.study-shell input,.clear-answer').forEach(e=>e.disabled=false);document.getElementById('next').disabled=false;if(back)back.disabled=false;msg('Your final submission has NOT been confirmed. '+e.message+' Select Finish to retry, or contact the researcher.','error');scheduleSync();}
+function scheduleSync(){
+ if(!S||['done','withdrawn'].includes(S.phase)||finalPacketPending())return;
+ clearTimeout(backgroundTimer);
+ backgroundTimer=setTimeout(async()=>{
+  if(S&&!closing&&!['done','withdrawn'].includes(S.phase)&&!finalPacketPending()&&(S.dirty||nextBatch().length)){
+   try{await sync(false);}catch(e){msg('Not yet synced. You may keep answering; keep this tab open.','error');}
+  }
+  if(S&&!['done','withdrawn'].includes(S.phase))scheduleSync();
+ },(Math.max(90,cfg.backgroundSyncSeconds||120)+Math.random()*30)*1000);
+}
+function setSubmitting(on){
+ const next=document.getElementById('next'),back=document.getElementById('back');
+ if(next){next.disabled=on;next.textContent=on?'SUBMITTING…':S&&S.submissionFrozen?'RETRY FINAL SUBMISSION →':'SUBMIT AND RETURN TO PROLIFIC →';}
+ if(back)back.disabled=on||!!(S&&S.submissionFrozen);
+ root.querySelectorAll('.study-shell input,.clear-answer').forEach(e=>e.disabled=on||!!(S&&S.submissionFrozen));
+}
+function finishConfirmed(){
+ S.phase='done';S.dirty=false;S.submissionFrozen=false;delete S.pendingRequest;persist();
+ if(releaseTabLock){releaseTabLock();releaseTabLock=null;}
+ if(!isTest&&canRedirect())location.assign(cfg.completionUrl);else done();
+}
+async function finish(){
+ if(closing)return;
+ for(const pg of [2,3]){const missing=validatePage(pg);if(missing.length){if(S.qpage!==pg){S.qpage=pg;changed();persist();questionPage();}showRequiredErrors(missing,pg);return;}}
+ closing=true;
+ if(!S.submissionFrozen){T.stop();T.log('submit_attempt');S.submissionFrozen=true;changed();persist();}
+ setSubmitting(true);clearTimeout(backgroundTimer);msg('Submitting your answers and route record. Please keep this tab open…');
+ try{
+  if(preview){donePreview();return;}
+  if(netPromise){try{await netPromise;}catch(e){/* retained packet is retried below */}}
+  // Finish/withdraw packets created before a network interruption are replayed verbatim.
+  if(finalPacketPending()){
+   const r=await sync(true,S.pendingRequest.action);
+   if(r&&r.status==='completed'){finishConfirmed();return;}
+   if(r&&r.status==='withdrawn'){route();return;}
+  }
+  let rounds=0;
+  while(nextBatch().length<T.s.events.filter(e=>e.seq>(S.ack||0)).length){
+   if(++rounds>300)throw new Error('The route log is unusually long. Please contact the researcher.');
+   await sync(true);
+  }
+  // If an older draft had to be recovered, loop once more to send the frozen final packet.
+  let result=await sync(true,'finish');
+  if(!result||result.status!=='completed')result=await sync(true,'finish');
+  if(!result||result.status!=='completed')throw new Error('No final confirmation was returned.');
+  finishConfirmed();
+ }catch(e){
+  closing=false;setSubmitting(false);
+  msg('Final submission has NOT been confirmed. '+e.message+' Use RETRY FINAL SUBMISSION in this tab, or contact the researcher.','error');
+ }
 }
 function donePreview(){S.phase='done';persist();done();}
 function done(){cleanupStore();if(T)T.stop();shell('<h1>'+(preview?'Preview complete':'Your responses have been saved')+'</h1><p>'+(preview?'This was a local preview. Nothing was sent to Google or Prolific.':'Thank you for taking part.')+'</p>'+(preview?'<button class="secondary" id="export">Download preview route log</button>':isTest?'<p>Test session complete. This record must not be treated as a research participant.</p>':canRedirect()?'<p>Your completion code: <b>'+esc(cfg.completionCode)+'</b></p><a class="primary" href="'+esc(cfg.completionUrl)+'">Return to Prolific</a>':'<p>Please contact the researcher through Prolific.</p>'),'Complete');if(preview)document.getElementById('export').onclick=downloadTrace;}
@@ -184,12 +274,13 @@ window.addEventListener('beforeunload',e=>{if(S&&S.phase!=='done'&&S.phase!=='wi
 window.addEventListener('error',e=>{if(T&&S&&S.phase!=='done')T.log('technical_error',{kind:'script',message:String(e.message||'Resource failed').slice(0,300)});});
 setInterval(()=>{if(S&&S.phase!=='done'){persist();const el=document.getElementById('live-count');if(el&&T)el.textContent=T.s.totalTransitions;}},5000);
 // Exposed read-only diagnostics for local QA; no credentials or participant identifiers returned.
-window.STUDY_DIAGNOSTICS=()=>S&&T?{build:cfg.build,entryRevision:ENTRY_REVISION,preview,condition:S.condition,phase:S.phase,qpage:S.qpage,summary:T.snapshot(),events:JSON.parse(JSON.stringify(T.s.events))}:{build:cfg.build,entryRevision:ENTRY_REVISION,preview};
-if(design){S=newState('PREVIEW-'+uuid());S.condition=force==='B'?1:0;S.phase='browse';initTrace();showStore();}
-else if(!preview&&entryProblem()){shell('<h1>Study entry is unavailable</h1><p>'+esc(entryProblem())+'</p><p>If you are already participating, keep your original tab and contact the researcher. Do not change your participant ID.</p><details><summary>Researcher diagnostic</summary><p><a href="deployment-check.html">Check the uploaded configuration</a></p></details>','Entry unavailable');}
+window.STUDY_DIAGNOSTICS=()=>S&&T?{build:cfg.build,entryRevision:ENTRY_REVISION,preview,condition:S.condition,phase:S.phase,qpage:S.qpage,networkInFlight:!!netPromise,pendingAction:S.pendingRequest?S.pendingRequest.action:null,summary:T.snapshot(),events:JSON.parse(JSON.stringify(T.s.events))}:{build:cfg.build,entryRevision:ENTRY_REVISION,preview};
+if(!preview&&entryProblem()){shell('<h1>Study entry is unavailable</h1><p>'+esc(entryProblem())+'</p><p>If you are already participating, keep your original tab and contact the researcher. Do not change your participant ID.</p><details><summary>Researcher diagnostic</summary><p><a href="deployment-check.html">Check the uploaded configuration</a></p></details>','Entry unavailable');}
 else {
  let tabPid='';try{tabPid=sessionStorage.getItem(NS+'tab_pid')||'';}catch(e){}
- const cached=tabPid&&(!urlPid||urlPid===tabPid)?load(tabPid):null;
+ let cached=tabPid&&(!urlPid||urlPid===tabPid)?load(tabPid):null;
+ if(isTest&&cached&&force&&cached.condition!==(force==='B'?1:0))cached=null;
+ if(isTest&&cached&&!urlPid&&['done','withdrawn'].includes(cached.phase))cached=null;
  if(cached&&cached.responseId&&cached.condition!==null&&cached.phase!=='consent'){
   S=cached;
   tabLock().then(ok=>{if(!ok){shell('<h1>Continue in your original tab</h1><p>This session is already open in another tab. Please close the duplicate tab.</p>','Session open');return;}initTrace();route();scheduleSync();});
