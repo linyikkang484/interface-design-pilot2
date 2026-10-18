@@ -1,4 +1,4 @@
-/* Pilot 2: independent dataset. Complete NEW backend/configuration before enabling recruitment. */
+/* Pilot 2 PL1/PL3 — backend already set. TEST ONLY until research launch confirmations are complete. */
 window.STUDY_CONFIG = {
   "studyId": "ameline-pilot2-pl1-pl3-20261017-p01",
   "dataSchema": "pilot2-clean-direct-v1",
