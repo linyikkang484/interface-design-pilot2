@@ -1,7 +1,7 @@
 /* New study controller. No legacy storage, endpoint, assignments, or dataset is read. */
 (function(){
 'use strict';
-const ENTRY_REVISION='entryfix-20261018-01';
+const ENTRY_REVISION='wtp-required-20261019-02';
 const cfg=window.STUDY_CONFIG,Q=window.QUESTIONNAIRE,root=document.getElementById('app');
 const p=new URLSearchParams(location.search),preview=p.get('preview')==='1',isTest=preview||p.get('test')==='1',design=preview&&p.get('flow')!=='1';
 const force=isTest?String(p.get('condition')||p.get('cond')||'').toUpperCase():'';
@@ -47,7 +47,7 @@ function researchNotice(){
 window.STUDY_ENTRY_STATUS=()=>({entryRevision:ENTRY_REVISION,configurationRevision:cfg.entryRevision||null,enabled:cfg.collectionEnabled===true,endpointConfigured:validEndpoint(),redirectConfigured:canRedirect(),problem:entryProblem()});
 function consent(){shell('<h1>Introduction and consent</h1>'+ 
  '<p>Thank you for considering this academic study. You will explore a simulated handbag brand website and answer brief questions about the Bonbon Mini handbag and your browsing experience. There are no right or wrong opinions.</p>'+ 
- '<p>Participation is voluntary. You must be at least 18 years old. You may stop at any time, and you may leave opinion items unanswered. No purchase or payment is required. Please use a desktop or laptop computer.</p>'+ 
+ '<p>Participation is voluntary. You must be at least 18 years old. You may stop taking part at any time. To move between questionnaire pages and submit, please answer every rating statement. For the hypothetical payment question, enter a nonnegative amount in US dollars (0 is valid). You may stop participating at any time. No purchase or payment is required. Please use a desktop or laptop computer.</p>'+ 
  '<p>We will collect your questionnaire responses and limited study-related navigation records. Your Prolific ID is used to link your study submission with Prolific; the linked research records are therefore not fully anonymous. Estimated study duration and payment are listed in the Prolific study description.</p>'+ 
  '<h2>Study information and consent</h2><p>Please review the study information and privacy notice provided with this study before continuing.</p>'+ 
  '<details class="privacy-notice"><summary>Study information and privacy notice</summary><div>'+researchNotice()+'</div></details>'+ 
@@ -115,38 +115,47 @@ function technical(){T.tick();T.log('technical_dialog_open');const layer=documen
 const PAGE2_GROUPS=['Your impressions','Buying this handbag'];
 const PAGE3_GROUPS=['Your attention to the product','The character of the browsing process'];
 function matrix(group,n){const items=Q.filter(q=>q.page===n&&q.group===group);
- return '<table class="matrix" aria-label="'+esc(group)+'"><thead><tr><th scope="col">Statement</th>'+[1,2,3,4,5,6,7].map(v=>'<th scope="col">'+v+'</th>').join('')+'</tr></thead><tbody>'+items.map(q=>'<tr data-question="'+q.id+'"><td><span>'+esc(q.text)+'</span><button type="button" class="clear-answer" data-clear="'+q.id+'" aria-label="Clear answer for '+esc(q.text)+'"'+(S.answers[q.id]==null?' hidden':'')+'>Clear answer</button></td>'+[1,2,3,4,5,6,7].map(v=>'<td><label data-label="'+v+'"><input type="radio" name="'+q.id+'" value="'+v+'" aria-label="'+v+': '+esc(q.text)+'"'+(S.answers[q.id]===v?' checked':'')+'></label></td>').join('')+'</tr>').join('')+'</tbody></table>';
+ return '<table class="matrix" aria-label="'+esc(group)+'"><thead><tr><th scope="col">Statement <span class="required-star" aria-hidden="true">*</span></th>'+[1,2,3,4,5,6,7].map(v=>'<th scope="col">'+v+'</th>').join('')+'</tr></thead><tbody>'+items.map(q=>'<tr data-question="'+q.id+'"><td><span>'+esc(q.text)+' <span class="required-star" aria-hidden="true">*</span></span></td>'+[1,2,3,4,5,6,7].map(v=>'<td><label data-label="'+v+'"><input type="radio" name="'+q.id+'" value="'+v+'" aria-label="'+v+': '+esc(q.text)+'"'+(S.answers[q.id]===v?' checked':'')+'></label></td>').join('')+'</tr>').join('')+'</tbody></table>';
 }
 const SCALE_NOTE='1 = Strongly disagree · 4 = Neither agree nor disagree · 7 = Strongly agree';
 function questionPage(){const n=S.qpage===3?3:2;S.qpage=n;let body='';
  if(n===2){const c=STIMULUS.colors.find(c=>c.id===S.color)||STIMULUS.colors[1];
   body='<h1>Your impressions of the handbag</h1><div class="target-text"><strong>Maison Améline — Bonbon Mini</strong><span>Color: '+esc(c.name)+'</span></div>'+ 
    '<p>Please evaluate the handbag in the color you selected.</p><p>All questions on this page refer only to the Bonbon Mini in the color you selected—not to the website or the entire brand.</p>'+ 
-   '<h2>Your impressions</h2><p class="scale-caption">'+SCALE_NOTE+'</p>'+matrix('Your impressions',2)+ 
+   '<p class="required-note">Required: choose one answer (1–7) for every statement before selecting Next.</p>'+ '<h2>Your impressions</h2><p class="scale-caption">'+SCALE_NOTE+'</p>'+matrix('Your impressions',2)+ 
    '<h2>Buying this handbag</h2><p class="scale-caption">Please use the same 1–7 agreement scale for the Bonbon Mini you viewed.</p>'+matrix('Buying this handbag',2);
-  const w=Q.find(q=>q.id==='wtp1'),v=S.answers.wtp1,ref=S.answers.wtp1_declined===1;
-  body+='<h2>Your maximum payment</h2><p>'+esc(w.text)+'</p><p class="wtp-help">'+esc(w.help)+'</p><div class="wtp-row"><span>US$</span><input name="wtp1" aria-label="Your maximum payment in US dollars" type="number" min="0" step="any" value="'+(v==null?'':esc(v))+'"'+(ref?' disabled':'')+'><label class="choice"><input type="checkbox" name="wtp1_declined"'+(ref?' checked':'')+'>Prefer not to answer</label></div>';
+  const w=Q.find(q=>q.id==='wtp1'),v=S.answers.wtp1;
+  body+='<h2>Your maximum payment <span class="required-star" aria-hidden="true">*</span></h2><p>'+esc(w.text)+'</p><p class="wtp-help">'+esc(w.help)+' Required: enter an amount in US dollars, including 0 if your willingness to pay is zero.</p><div class="wtp-row" data-question="wtp1"><span>US$</span><input name="wtp1" aria-label="Your maximum payment in US dollars (required)" aria-required="true" required type="number" inputmode="decimal" min="0" step="any" value="'+(v==null?'':esc(v))+'"></div>';
  }else{
   body='<h1>Your browsing experience</h1><p>Please think about your experience of exploring the Bonbon Mini before you first reached its product-detail page. When answering, focus on the browsing experience itself rather than your opinion of the handbag.</p>'+ 
-   '<p>Choose one number for each statement. You may leave an opinion item unanswered.</p>'+ 
+   '<p>Required: choose one number (1–7) for every statement. You may still stop participating at any time.</p>'+ 
    '<h2>Your attention to the product</h2><p class="scale-caption">'+SCALE_NOTE+'</p>'+matrix('Your attention to the product',3)+ 
    '<h2>The character of the browsing process</h2><p class="scale-caption">Please use the same 1–7 agreement scale. Think about the process itself, not just the final handbag.</p>'+matrix('The character of the browsing process',3)+ 
    '<p style="margin-top:25px">Thank you for taking part. Selecting the button below will submit your responses and return you to Prolific. Please wait until the submission finishes saving.</p>';
  }
+ body='<div id="validation-message" class="validation-message" role="alert" hidden></div>'+body;
  body+='<div class="actions">'+(n===3?'<button class="secondary" id="back">Back</button>':'<span></span>')+'<button class="primary" id="next">'+(n===3?'SUBMIT AND RETURN TO PROLIFIC →':'NEXT →')+'</button></div>';
  shell(body,'Page 0'+n+' of 03');
  const readPage=()=>{
   Q.filter(q=>q.page===n).forEach(q=>{if(q.type==='agreement'){const el=root.querySelector('input[name="'+q.id+'"]:checked');S.answers[q.id]=el?Number(el.value):null;}
-   else{const refuse=root.querySelector('[name="'+q.refusalKey+'"]'),input=root.querySelector('[name="'+q.id+'"]');S.answers[q.refusalKey]=refuse.checked?1:0;input.disabled=refuse.checked;if(refuse.checked)input.value='';S.answers[q.id]=refuse.checked||input.value===''?null:Number(input.value);}
+   else{const input=root.querySelector('[name="'+q.id+'"]');S.answers[q.refusalKey]=0;S.answers[q.id]=input.value===''||!input.validity.valid?null:Number(input.value);}
   });changed();persist();msg(preview?'Preview answers stay in this browser only.':'Saved in this browser; background sync may still be pending.');
-  root.querySelectorAll('[data-clear]').forEach(b=>b.hidden=S.answers[b.dataset.clear]==null);
+  const remaining=validatePage(n);root.querySelectorAll('.question-missing').forEach(el=>{if(!remaining.includes(el.dataset.question)){el.classList.remove('question-missing');el.querySelectorAll('[aria-invalid]').forEach(input=>input.removeAttribute('aria-invalid'));}});
+  const warning=root.querySelector('#validation-message');if(warning&&!remaining.length)warning.hidden=true;
  };
  const form=root.querySelector('.study-shell');form.onchange=readPage;form.oninput=readPage;
- form.addEventListener('click',e=>{const b=e.target.closest('[data-clear]');if(!b)return;root.querySelectorAll('[name="'+b.dataset.clear+'"]').forEach(i=>i.checked=false);readPage();});
  const b=document.getElementById('back');if(b)b.onclick=()=>{if(closing)return;readPage();S.qpage=2;changed();persist();T.log('questionnaire_page',{page:2});questionPage();};
- document.getElementById('next').onclick=()=>{readPage();if(validatePage(n).length){msg('Please enter a nonnegative amount, leave it blank, or choose Prefer not to answer.','error');return;}if(n===3){finish();return;}S.qpage=3;T.log('questionnaire_page',{page:3});changed();persist();questionPage();};
+ document.getElementById('next').onclick=()=>{readPage();const missing=validatePage(n);if(missing.length){showRequiredErrors(missing,n);return;}if(n===3){const earlier=validatePage(2);if(earlier.length){S.qpage=2;changed();persist();questionPage();showRequiredErrors(earlier,2);return;}finish();return;}S.qpage=3;T.log('questionnaire_page',{page:3});changed();persist();questionPage();};
 }
-function validatePage(page){return Q.filter(q=>q.page===page).filter(q=>{const v=S.answers[q.id];if(v===null||v===undefined||v==='')return false;if(q.type==='number')return S.answers[q.refusalKey]!==1&&(!Number.isFinite(v)||v<0);return !Number.isInteger(v)||v<1||v>7;}).map(q=>q.id);}
+function validatePage(page){return Q.filter(q=>q.page===page).filter(q=>{const v=S.answers[q.id];if(q.type==='number'){return !(typeof v==='number'&&Number.isFinite(v)&&v>=0&&S.answers[q.refusalKey]!==1);}
+  return !(typeof v==='number'&&Number.isInteger(v)&&v>=1&&v<=7);}).map(q=>q.id);}
+function showRequiredErrors(missing,page){const warning=root.querySelector('#validation-message');const text=page===2?'Please answer all seven rating statements and enter your maximum payment in US dollars (0 is valid).':'Please answer all eight browsing-experience statements before submitting.';
+ if(warning){warning.hidden=false;warning.textContent=text+' Missing items: '+missing.length+'.';}
+ root.querySelectorAll('.question-missing').forEach(el=>el.classList.remove('question-missing'));
+ let first=null;missing.forEach(id=>{const el=root.querySelector('[data-question="'+id+'"]');if(!el)return;el.classList.add('question-missing');el.querySelectorAll('input').forEach(i=>i.setAttribute('aria-invalid','true'));if(!first)first=el;});
+ msg('Please complete the highlighted required questions.','error');
+ if(first){first.scrollIntoView({behavior:'auto',block:'center'});const input=first.querySelector('input:not([disabled])');if(input)input.focus({preventScroll:true});}}
+
 function snapshot(){const ts=T.snapshot();const traceCopy=JSON.parse(JSON.stringify(T.s));delete traceCopy.events;return {phase:S.phase,qpage:S.qpage,color:S.color,answers:JSON.parse(JSON.stringify(S.answers)),trace:traceCopy,summary:ts,technicalText:S.technicalText||'',survey_elapsed_ms:S.surveyStartedAt?(S.surveyBaseMs||0)+Date.now()-S.surveyStartedAt:null,surveyStartedAt:S.surveyStartedAt||null,route:S.route,storeStarted:S.storeStarted,revision:S.revision,total_events:(T.s.eventsBase||0)+T.s.events.length};}
 function nextBatch(){const arr=T.s.events.filter(e=>e.seq>(S.ack||0));let batch=[],size=2;for(const e of arr){const len=JSON.stringify(e).length+1;if(batch.length>=100||size+len>30000)break;batch.push(e);size+=len;}return batch;}
 async function sync(urgent,action){if(preview){S.dirty=false;return {ok:true,preview:true};}if(!S||!S.responseId)return;if(netPromise){await netPromise;if(!urgent)return;}
@@ -158,14 +167,14 @@ async function sync(urgent,action){if(preview){S.dirty=false;return {ok:true,pre
 }
 let backgroundTimer;
 function scheduleSync(){if(!S||['done','withdrawn'].includes(S.phase))return;clearTimeout(backgroundTimer);backgroundTimer=setTimeout(async()=>{if(S&&!closing&&S.phase!=='done'&&(S.dirty||nextBatch().length)){try{await sync(false);}catch(e){msg('Not yet synced. You may keep answering; keep this tab open.','error');}}if(S&&!['done','withdrawn'].includes(S.phase))scheduleSync();},(Math.max(60,cfg.backgroundSyncSeconds||75)+Math.random()*20)*1000);}
-async function finish(){if(closing)return;closing=true;document.getElementById('next').disabled=true;const back=document.getElementById('back');if(back)back.disabled=true;
+async function finish(){if(closing)return;for(const pg of [2,3]){const missing=validatePage(pg);if(missing.length){if(S.qpage!==pg){S.qpage=pg;changed();persist();questionPage();}showRequiredErrors(missing,pg);return;}}closing=true;document.getElementById('next').disabled=true;const back=document.getElementById('back');if(back)back.disabled=true;
  root.querySelectorAll('.study-shell input,.clear-answer').forEach(e=>e.disabled=true);
  T.stop();T.log('submit_attempt');changed();persist();clearTimeout(backgroundTimer);msg('Submitting your answers and route record. Please keep this tab open…');
  try{if(preview){donePreview();return;}if(netPromise){try{await netPromise;}catch(e){/* retry full current snapshot below */}}
   let rounds=0;while(nextBatch().length < T.s.events.filter(e=>e.seq>(S.ack||0)).length){if(++rounds>300)throw new Error('The event record is unusually long. Please contact the researcher.');await sync(true);}
   const r=await sync(true,'finish');if(!r||r.status!=='completed')throw new Error('No final confirmation was returned.');S.phase='done';S.dirty=false;persist();if(releaseTabLock)releaseTabLock();
   if(!isTest&&canRedirect()){location.assign(cfg.completionUrl);}else done();
- }catch(e){closing=false;root.querySelectorAll('.study-shell input,.clear-answer').forEach(e=>e.disabled=false);document.getElementById('next').disabled=false;const wtp=root.querySelector('[name="wtp1"]');if(wtp&&S.answers.wtp1_declined===1)wtp.disabled=true;if(back)back.disabled=false;msg('Your final submission has NOT been confirmed. '+e.message+' Select Finish to retry, or contact the researcher.','error');scheduleSync();}
+ }catch(e){closing=false;root.querySelectorAll('.study-shell input,.clear-answer').forEach(e=>e.disabled=false);document.getElementById('next').disabled=false;if(back)back.disabled=false;msg('Your final submission has NOT been confirmed. '+e.message+' Select Finish to retry, or contact the researcher.','error');scheduleSync();}
 }
 function donePreview(){S.phase='done';persist();done();}
 function done(){cleanupStore();if(T)T.stop();shell('<h1>'+(preview?'Preview complete':'Your responses have been saved')+'</h1><p>'+(preview?'This was a local preview. Nothing was sent to Google or Prolific.':'Thank you for taking part.')+'</p>'+(preview?'<button class="secondary" id="export">Download preview route log</button>':isTest?'<p>Test session complete. This record must not be treated as a research participant.</p>':canRedirect()?'<p>Your completion code: <b>'+esc(cfg.completionCode)+'</b></p><a class="primary" href="'+esc(cfg.completionUrl)+'">Return to Prolific</a>':'<p>Please contact the researcher through Prolific.</p>'),'Complete');if(preview)document.getElementById('export').onclick=downloadTrace;}

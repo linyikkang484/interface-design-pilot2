@@ -1,4 +1,4 @@
-/* Pilot 2 / PL1 versus PL3 / Clean Direct — entryfix-20261018-01
+/* Pilot 2 / PL1 versus PL3 / Clean Direct — wtp-required-20261019-02
  * Replace together with index.html and js/study.js from this package.
  * collectionEnabled is the single admission switch. true opens the consent page.
  * It is NOT an ethics approval, a source-rights check, or a live saving test.
@@ -25,6 +25,6 @@ window.STUDY_CONFIG = {
   "retentionNotice": "",
   "ethicsNotice": "",
   "backgroundSyncSeconds": 90,
-  "entryRevision": "entryfix-20261018-01",
+  "entryRevision": "wtp-required-20261019-02",
   "completionRedirectEnabled": true
 };
