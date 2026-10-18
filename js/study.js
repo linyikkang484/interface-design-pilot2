@@ -1,13 +1,14 @@
 /* Integrated A/B flow: consent -> one assigned website -> required survey -> confirmed receipt. */
 (function(){
 'use strict';
-const ENTRY_REVISION='integrated-ab-20261019-03';
+const ENTRY_REVISION='integrated-ab-idfix-20261019-04';
+const PID_POLICY='prolific-24char-v1';
 const cfg=window.STUDY_CONFIG,Q=window.QUESTIONNAIRE,root=document.getElementById('app');
 const p=new URLSearchParams(location.search),preview=p.get('preview')==='1',isTest=preview||p.get('test')==='1';
 const force=isTest?String(p.get('condition')||p.get('cond')||'').toUpperCase():'';
 const NS='AMELINE_PILOT2_CLEAN|'+cfg.dataNamespace+'|'+(preview?'preview':isTest?'test':'real')+'|';
 const urlPid=p.get('PROLIFIC_PID')||'';
-let S=null,T=null,store=null,saveTimer=null,netPromise=null,closing=false,releaseTabLock=null,localOK=true,revisionSent=0;
+let S=null,T=null,store=null,saveTimer=null,netPromise=null,closing=false,releaseTabLock=null,localOK=true,revisionSent=0,returningSession=false;
 const esc=s=>String(s===undefined?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uuid=()=>crypto.randomUUID();
 const key256=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
@@ -53,8 +54,8 @@ function consent(){shell('<h1>Introduction and consent</h1>'+
  '<details class="privacy-notice"><summary>Study information and privacy notice</summary><div>'+researchNotice()+'</div></details>'+ 
  '<p style="margin-top:20px">I confirm that I am at least 18 years old, have reviewed the study information, and agree to participate.</p>'+ 
  '<label class="choice"><input type="radio" name="consent" id="consent-check" value="1">Yes, I agree.</label><label class="choice"><input type="radio" name="consent" id="consent-no" value="0">No, I do not agree.</label>'+ 
- '<h2>Prolific ID</h2><label class="input-label" for="pid">Please enter your Prolific ID. This is a study identifier, not your password.</label><input id="pid" type="text" maxlength="64" value="'+esc(urlPid)+'" autocomplete="off" spellcheck="false">'+ 
- (isTest?'<p class="optional-hint">Researcher preview/test only: leave the ID blank to generate a test identifier.</p>':'')+ 
+ '<h2>'+(isTest?'Researcher test ID':'Prolific ID')+'</h2><label class="input-label" for="pid">'+(isTest?'A unique test ID will be generated when you start. Do not enter a real participant ID.':'Please enter your complete 24-character Prolific ID. This is a study identifier, not your password.')+'</label><input id="pid" type="text" maxlength="64" value="'+esc(isTest?'':urlPid)+'" '+(isTest||/^[A-Za-z0-9]{24}$/.test(urlPid)?'readonly ':'')+'autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="'+(isTest?'Generated automatically when you start':'Your 24-character Prolific ID')+'">'+
+ (isTest?'<p class="optional-hint">Researcher preview/test only. Use a new automatic ID for each fresh run; reloading the same run preserves its progress.</p>':urlPid?'<p class="optional-hint">Your ID was supplied in the entry link. If it is incorrect, reopen the study from Prolific rather than changing identities.</p>':'')+ 
  '<h2>Before you begin</h2><p>Explore the Bonbon Mini presentation in the displayed order, including its shape, details and four available colors. You may click any color card to open the Bonbon Mini product page.</p>'+ 
  '<p>Review the product page and select “Continue to questions.” Your answers will refer to the Bonbon Mini in the color you have selected. You do not need to add anything to a bag, check out or create an account.</p>'+ 
  '<div class="actions"><span></span><button id="start" class="primary">START BROWSING →</button></div>','Page 01 of 03');
@@ -77,6 +78,7 @@ async function request(action,extra,maxAttempts){
    if(j.study_id!==cfg.studyId||j.data_schema!==cfg.dataSchema||j.data_namespace!==cfg.dataNamespace)throw Object.assign(new Error('The website and study server do not match. Please contact the researcher; do not change your ID.'),{permanent:true,code:'study_mismatch'});
    if(!j.ok)throw Object.assign(new Error(j.message||j.error||'Save failed'),{permanent:!j.retry,retryAfter:j.retry_after_ms,code:j.error});
    if(j.service_revision!==cfg.requiredServiceRevision||j.required_policy!=='wtp-numeric-required-20261019-02')throw Object.assign(new Error('The researcher has not yet published the matching integrated A/B backend. Keep this tab open and contact the researcher.'),{permanent:true,code:'service_version'});
+   if(j.pid_policy!==PID_POLICY)throw Object.assign(new Error('The participant-ID update has not been deployed to the study server yet. Keep this tab open and contact the researcher.'),{permanent:true,code:'pid_policy'});
    return j;
   }catch(e){
    err=e;
@@ -91,22 +93,58 @@ async function request(action,extra,maxAttempts){
  const message=err&&err.name==='AbortError'?'The server has not confirmed this request yet. Your original progress is retained in this browser. Retry from this tab.':err&&err.message||'The server has not confirmed this request. Retry from this tab.';
  throw Object.assign(new Error(message),{code:err&&err.code||'network',permanent:!!(err&&err.permanent)});
 }
-async function start(){const go=document.getElementById('start');if(!document.getElementById('consent-check').checked){msg('Please confirm consent before starting.','error');return;}
- let pid=document.getElementById('pid').value.trim();if(!pid&&isTest){pid='TEST-'+uuid();document.getElementById('pid').value=pid;}
- if(!pid||pid.length>64||(!isTest&&!/^[a-zA-Z0-9_-]+$/.test(pid))){msg('A valid participant ID is required.','error');return;}
- S=load(pid)||newState(pid);persist();if(!localOK){msg('Browser storage is not available. Please contact the researcher rather than starting in another browser.','error');return;}
+function acceptablePid(pid){return isTest?/^[A-Za-z0-9_-]{1,64}$/.test(pid):/^[A-Za-z0-9]{24}$/.test(pid);}
+async function start(){
+ const go=document.getElementById('start');
+ if(!document.getElementById('consent-check').checked){msg('Please confirm consent before starting.','error');return;}
+ let pid=document.getElementById('pid').value.trim();
+ if(!pid&&isTest){pid='TEST-'+uuid();document.getElementById('pid').value=pid;}
+ if(!acceptablePid(pid)){msg(isTest?'Use the automatically generated test ID.':'Please enter your complete 24-character Prolific ID. Numbers such as 1 or 2 are not valid IDs.','error');return;}
+ if(!isTest&&urlPid&&pid!==urlPid){msg('The entered ID does not match the Prolific entry link. Reopen this study from Prolific.','error');return;}
+ await openSession(pid,go,false);
+}
+async function openSession(pid,go,resumeApproved){
+ if(!acceptablePid(pid)){msg('This saved ID is not a complete 24-character Prolific ID. Reopen the study from Prolific; use the researcher test entry for testing.','error');return;}
+ S=load(pid)||newState(pid);let resumed=!!S.responseId;persist();
+ if(!localOK){msg('Browser storage is not available. Please contact the researcher rather than starting in another browser.','error');return;}
  go.disabled=true;msg('Creating or restoring your study session…');
- if(!await tabLock()){go.disabled=false;msg('This session is already open in another tab. Continue there or close it before retrying.','error');return;}
+ if(!releaseTabLock&&!await tabLock()){go.disabled=false;msg('This session is already open in another tab. Continue there or close it before retrying.','error');return;}
  try{
   if(preview){if(S.condition===null)S.condition=force==='B'?1:force==='A'?0:(Math.random()<.5?0:1);S.responseId=S.responseId||'PREVIEW-'+uuid();}
   else {const r=await request('start',{consent:1,force_condition:force==='A'?0:force==='B'?1:null},6);
+   resumed=resumed||r.resumed===true;
    S.responseId=r.response_id;S.condition=r.condition;S.ack=Math.max(S.ack||0,r.ack||0);
    if((r.pending_local_retry||r.resume_requires_original)&&!S.trace){throw new Error('The saved session needs its original tab and locally retained progress. Please contact the researcher; do not change your ID or repeat the browsing task.');}
-   if(r.snapshot&&(!S.trace||r.revision>S.revision)) restoreServerSnapshot(r);
-   S.revision=Math.max(S.revision||0,r.revision||0);if(r.status==='completed')S.phase='done';else if(r.status==='withdrawn')S.phase='withdrawn';
+   if(r.snapshot&&(!S.trace||r.revision>S.revision))restoreServerSnapshot(r);
+   S.revision=Math.max(S.revision||0,r.revision||0);
+   if(r.status==='completed'){S.phase='done';S.dirty=false;S.submissionFrozen=false;delete S.pendingRequest;}
+   else if(r.status==='withdrawn'){S.phase='withdrawn';S.dirty=false;delete S.pendingRequest;}
   }
-  S.phase=S.phase==='consent'?'browse':S.phase;persist();initTrace();route();scheduleSync();
+  S.phase=S.phase==='consent'?'browse':S.phase;returningSession=resumed;persist();
+  if(resumed&&!resumeApproved){savedSessionNotice(true);return;}
+  enterSavedStage();
  }catch(e){go.disabled=false;msg(e.message,'error');if(releaseTabLock){releaseTabLock();releaseTabLock=null;}}
+}
+function enterSavedStage(){initTrace();route();scheduleSync();}
+function savedSessionNotice(serverConfirmed){
+ cleanupStore();if(T)T.stop();
+ const terminal=S.phase==='done'||S.phase==='withdrawn';
+ const stage=S.phase==='done'?'previous completion':S.phase==='survey'?'questionnaire':S.phase==='withdrawn'?'ended session':'website browsing';
+ shell('<h1>Saved session found</h1><p>This browser contains an earlier session at the '+esc(stage)+' stage. This is not a new participant or a new response.</p>'+ 
+  '<p>'+(preview?'This is a locally saved preview. Nothing has been sent to Google or Prolific.':serverConfirmed?'The study server has checked this record.':'Select the button below to check the saved record with the study server before continuing.')+'</p>'+ 
+  '<p>'+(terminal?'A previously completed or ended session will not restart the browsing task.':'Continuing keeps the original answers, browsing record and assignment; it does not begin a second browsing task.')+'</p>'+ 
+  '<div class="actions"><button class="primary" id="resume-existing">'+(S.phase==='done'?'VIEW PREVIOUS CONFIRMATION':S.phase==='withdrawn'?'VIEW ENDED SESSION':'CONTINUE SAVED SESSION')+'</button>'+ 
+  (isTest?'<button class="secondary" id="new-researcher-test">START A NEW RESEARCHER TEST</button>':'')+'</div>'+ 
+  (isTest?'<p class="optional-hint">A new researcher test gets a new automatic test ID. Earlier test records are retained, not deleted.</p>':''),'Saved progress');
+ document.getElementById('resume-existing').onclick=async()=>{const go=document.getElementById('resume-existing');go.disabled=true;if(serverConfirmed){returningSession=true;enterSavedStage();}else await openSession(S.pid,go,true);};
+ if(isTest)document.getElementById('new-researcher-test').onclick=freshResearcherTest;
+}
+function freshResearcherTest(){
+ if(!isTest)return;
+ if(S)persist();cleanupStore();if(T){T.destroy();T=null;}
+ clearTimeout(saveTimer);clearTimeout(backgroundTimer);if(releaseTabLock){releaseTabLock();releaseTabLock=null;}
+ S=null;closing=false;returningSession=false;try{sessionStorage.removeItem(NS+'tab_pid');}catch(e){localOK=false;}
+ consent();
 }
 // Restore ONLY server-confirmed values. Unknown intervals are never filled in as visible time.
 function restoreServerSnapshot(r){
@@ -232,6 +270,7 @@ function setSubmitting(on){
  root.querySelectorAll('.study-shell input,.clear-answer').forEach(e=>e.disabled=on||!!(S&&S.submissionFrozen));
 }
 function finishConfirmed(){
+ returningSession=false;
  S.phase='done';S.dirty=false;S.submissionFrozen=false;delete S.pendingRequest;persist();
  if(releaseTabLock){releaseTabLock();releaseTabLock=null;}
  if(!isTest&&canRedirect())location.assign(cfg.completionUrl);else done();
@@ -266,8 +305,8 @@ async function finish(){
   msg('Final submission has NOT been confirmed. '+e.message+' Use RETRY FINAL SUBMISSION in this tab, or contact the researcher.','error');
  }
 }
-function donePreview(){S.phase='done';persist();done();}
-function done(){cleanupStore();if(T)T.stop();shell('<h1>'+(preview?'Preview complete':'Your responses have been saved')+'</h1><p>'+(preview?'This was a local preview. Nothing was sent to Google or Prolific.':'Thank you for taking part.')+'</p>'+(preview?'<button class="secondary" id="export">Download preview route log</button>':isTest?'<p>Test session complete. This record must not be treated as a research participant.</p>':canRedirect()?'<p>Your completion code: <b>'+esc(cfg.completionCode)+'</b></p><a class="primary" href="'+esc(cfg.completionUrl)+'">Return to Prolific</a>':'<p>Please contact the researcher through Prolific.</p>'),'Complete');if(preview)document.getElementById('export').onclick=downloadTrace;}
+function donePreview(){returningSession=false;S.phase='done';persist();done();}
+function done(){cleanupStore();if(T)T.stop();shell('<h1>'+(returningSession?'Previous submission confirmation':preview?'Preview complete':'Your responses have been saved')+'</h1><p>'+(returningSession?'This session was completed earlier. No new response or additional completion has been created.':preview?'This was a local preview. Nothing was sent to Google or Prolific.':'Thank you for taking part.')+'</p>'+(preview?'<button class="secondary" id="export">Download preview route log</button>':isTest?'<p>Test session complete. This record must not be treated as a research participant.</p>':canRedirect()?'<p>Your completion code: <b>'+esc(cfg.completionCode)+'</b></p><a class="primary" href="'+esc(cfg.completionUrl)+'">Return to Prolific</a>':'<p>Please contact the researcher through Prolific.</p>'),'Complete');if(preview)document.getElementById('export').onclick=downloadTrace;}
 window.addEventListener('pagehide',()=>{if(T){T.tick();T.stop();}persist();});
 window.addEventListener('pageshow',e=>{if(e.persisted&&S&&S.phase==='browse'&&T)T.begin(true);});
 window.addEventListener('beforeunload',e=>{if(S&&S.phase!=='done'&&S.phase!=='withdrawn'&&S.dirty&&!preview){persist();e.preventDefault();e.returnValue='';}});
@@ -277,13 +316,20 @@ setInterval(()=>{if(S&&S.phase!=='done'){persist();const el=document.getElementB
 window.STUDY_DIAGNOSTICS=()=>S&&T?{build:cfg.build,entryRevision:ENTRY_REVISION,preview,condition:S.condition,phase:S.phase,qpage:S.qpage,networkInFlight:!!netPromise,pendingAction:S.pendingRequest?S.pendingRequest.action:null,summary:T.snapshot(),events:JSON.parse(JSON.stringify(T.s.events))}:{build:cfg.build,entryRevision:ENTRY_REVISION,preview};
 if(!preview&&entryProblem()){shell('<h1>Study entry is unavailable</h1><p>'+esc(entryProblem())+'</p><p>If you are already participating, keep your original tab and contact the researcher. Do not change your participant ID.</p><details><summary>Researcher diagnostic</summary><p><a href="deployment-check.html">Check the uploaded configuration</a></p></details>','Entry unavailable');}
 else {
+ // Only researcher links can request a fresh test. Never clear real records or credentials.
+ const runToken=isTest?p.get('test_run'):null;
+ if(runToken){try{if(sessionStorage.getItem(NS+'test_run')!==runToken){sessionStorage.removeItem(NS+'tab_pid');sessionStorage.setItem(NS+'test_run',runToken);}}catch(e){localOK=false;}}
  let tabPid='';try{tabPid=sessionStorage.getItem(NS+'tab_pid')||'';}catch(e){}
  let cached=tabPid&&(!urlPid||urlPid===tabPid)?load(tabPid):null;
- if(isTest&&cached&&force&&cached.condition!==(force==='B'?1:0))cached=null;
- if(isTest&&cached&&!urlPid&&['done','withdrawn'].includes(cached.phase))cached=null;
+ if(!isTest&&cached&&!acceptablePid(cached.pid))cached=null;
+ if(isTest&&cached&&force&&cached.condition!==null&&cached.condition!==(force==='B'?1:0))cached=null;
  if(cached&&cached.responseId&&cached.condition!==null&&cached.phase!=='consent'){
-  S=cached;
-  tabLock().then(ok=>{if(!ok){shell('<h1>Continue in your original tab</h1><p>This session is already open in another tab. Please close the duplicate tab.</p>','Session open');return;}initTrace();route();scheduleSync();});
- }else consent();
+  S=cached;savedSessionNotice(false);
+ }else{
+  consent();
+  // A failed first request must retry the SAME automatic test ID, not create a new test.
+  if(isTest&&cached&&cached.phase==='consent'&&cached.pid)document.getElementById('pid').value=cached.pid;
+ }
+
 }
 })();

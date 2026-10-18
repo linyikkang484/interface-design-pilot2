@@ -1,4 +1,4 @@
-/* Pilot 2 / PL1 versus PL3 / Clean Direct — integrated-ab-20261019-03
+/* Pilot 2 / PL1 versus PL3 / Clean Direct — integrated-ab-idfix-20261019-04
  * Replace together with index.html and js/study.js from this package.
  * collectionEnabled is the single admission switch. true opens the consent page.
  * It is NOT an ethics approval, a source-rights check, or a live saving test.
@@ -26,6 +26,7 @@ window.STUDY_CONFIG = {
   "ethicsNotice": "",
   "backgroundSyncSeconds": 120,
   "requiredServiceRevision": "integrated-ab-20261019-03",
-  "entryRevision": "integrated-ab-20261019-03",
-  "completionRedirectEnabled": true
+  "entryRevision": "integrated-ab-idfix-20261019-04",
+  "completionRedirectEnabled": true,
+  "pidPolicy": "prolific-24char-v1"
 };
