@@ -1,6 +1,7 @@
 /* New study controller. No legacy storage, endpoint, assignments, or dataset is read. */
 (function(){
 'use strict';
+const ENTRY_REVISION='entryfix-20261018-01';
 const cfg=window.STUDY_CONFIG,Q=window.QUESTIONNAIRE,root=document.getElementById('app');
 const p=new URLSearchParams(location.search),preview=p.get('preview')==='1',isTest=preview||p.get('test')==='1',design=preview&&p.get('flow')!=='1';
 const force=isTest?String(p.get('condition')||p.get('cond')||'').toUpperCase():'';
@@ -16,20 +17,40 @@ const recordKey=pid=>NS+'record|'+pid;
 function persist(){if(!S)return;set(recordKey(S.pid),JSON.stringify(S));try{sessionStorage.setItem(NS+'tab_pid',S.pid);}catch(e){localOK=false;}}
 function changed(){if(!S)return;S.revision=(S.revision||0)+1;S.dirty=true;clearTimeout(saveTimer);saveTimer=setTimeout(persist,150);}
 function msg(text,kind){if(!localOK&&S&&S.phase!=='done'){text='Browser storage could not retain the latest progress. Keep this tab open and contact the researcher. Cloud saving may still be pending.';kind='error';}const el=document.getElementById('status-message');if(el){el.textContent=text;el.className='msg '+(kind||'');}}
-function top(label){return (preview?'<div class="preview-banner">LOCAL PREVIEW · '+esc(cfg.build)+' · No cloud data or Prolific submission</div>':isTest?'<div class="preview-banner">TEST RECORD · '+esc(cfg.build)+'</div>':'')+'<header class="study-top"><strong>Website Browsing Study</strong><span>'+esc(label)+'</span></header>';}
+function top(label){return (preview?'<div class="preview-banner">LOCAL PREVIEW · '+esc(cfg.build)+' · No cloud data or Prolific submission</div>':isTest?'<div class="preview-banner">TEST RECORD · '+esc(cfg.build)+' · '+ENTRY_REVISION+'</div>':'')+'<header class="study-top"><strong>Website Browsing Study</strong><span>'+esc(label)+'</span></header>';}
 function shell(body,label){root.innerHTML=top(label)+'<main class="study-shell">'+body+'<p id="status-message" class="msg" role="status"></p></main>';window.scrollTo(0,0);}
 function load(pid){try{const s=JSON.parse(get(recordKey(pid)));return s&&s.studyId===cfg.studyId&&s.dataNamespace===cfg.dataNamespace?s:null;}catch(e){return null;}}
 function newState(pid){const savedKey=get(NS+'credential|'+pid);const key=/^[0-9a-f]{64}$/.test(savedKey||'')?savedKey:key256();set(NS+'credential|'+pid,key);
  return {studyId:cfg.studyId,dataNamespace:cfg.dataNamespace,build:cfg.build,localId:uuid(),pid,clientKey:key,responseId:null,condition:null,phase:'consent',qpage:2,color:'beige',answers:{},revision:1,ack:0,dirty:true,isTest:isTest?1:0};}
 async function tabLock(){if(preview||!navigator.locks)return true;
  return new Promise(resolve=>{navigator.locks.request(NS+'writer|'+S.pid,{ifAvailable:true},lock=>{if(!lock){resolve(false);return;}return new Promise(release=>{releaseTabLock=release;resolve(true);});}).catch(()=>resolve(true));});}
-function canCollect(){return cfg.collectionEnabled&&cfg.apiUrl&&cfg.researcherName&&cfg.institution&&cfg.contact&&cfg.retentionNotice&&cfg.ethicsNotice&&cfg.launchReviewConfirmed&&cfg.sourceVisualReviewConfirmed&&cfg.completionConfirmedForThisStudy;}
+// Technical admission is deliberately separate from research/ethics review.
+function validEndpoint(){return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(String(cfg.apiUrl||''));}
+function entryProblem(){
+ if(cfg.entryRevision!==ENTRY_REVISION)return 'The uploaded configuration and study script are from different updates. Please contact the researcher.';
+ if(!validEndpoint())return 'The study-server address has not been configured correctly. Please contact the researcher.';
+ if(!isTest&&cfg.collectionEnabled!==true)return 'The researcher has temporarily paused new entry. Please contact the researcher through Prolific.';
+ return '';
+}
+function canRedirect(){
+ if(cfg.completionRedirectEnabled!==true)return false;
+ const m=/^https:\/\/app\.prolific\.com\/submissions\/complete\?cc=([A-Za-z0-9]+)$/.exec(String(cfg.completionUrl||''));
+ return !!m&&m[1]===cfg.completionCode;
+}
+function researchNotice(){
+ const name=[cfg.researcherName,cfg.institution].filter(x=>typeof x==='string'&&x.trim()).map(esc).join(' · ');
+ const contact=cfg.contact||'Please contact the researcher through the messaging system for this study on Prolific.';
+ return (name?'<p>'+name+'</p>':'')+'<p>'+esc(contact)+'</p>'+ 
+  (cfg.retentionNotice?'<p>'+esc(cfg.retentionNotice)+'</p>':'<p>For study-specific data retention and withdrawal information, please contact the researcher through Prolific before deciding whether to take part.</p>')+
+  (cfg.ethicsNotice?'<p>'+esc(cfg.ethicsNotice)+'</p>':'');
+}
+window.STUDY_ENTRY_STATUS=()=>({entryRevision:ENTRY_REVISION,configurationRevision:cfg.entryRevision||null,enabled:cfg.collectionEnabled===true,endpointConfigured:validEndpoint(),redirectConfigured:canRedirect(),problem:entryProblem()});
 function consent(){shell('<h1>Introduction and consent</h1>'+ 
  '<p>Thank you for considering this academic study. You will explore a simulated handbag brand website and answer brief questions about the Bonbon Mini handbag and your browsing experience. There are no right or wrong opinions.</p>'+ 
  '<p>Participation is voluntary. You must be at least 18 years old. You may stop at any time, and you may leave opinion items unanswered. No purchase or payment is required. Please use a desktop or laptop computer.</p>'+ 
  '<p>We will collect your questionnaire responses and limited study-related navigation records. Your Prolific ID is used to link your study submission with Prolific; the linked research records are therefore not fully anonymous. Estimated study duration and payment are listed in the Prolific study description.</p>'+ 
  '<h2>Study information and consent</h2><p>Please review the study information and privacy notice provided with this study before continuing.</p>'+ 
- '<details class="privacy-notice"><summary>Study information and privacy notice</summary><div><p>'+esc(cfg.researcherName||'[Researcher name not yet configured]')+' · '+esc(cfg.institution||'[Institution not yet configured]')+'</p><p>Contact: '+esc(cfg.contact||'[Contact not yet configured]')+'</p><p>'+esc(cfg.retentionNotice||'[Data retention and withdrawal notice not yet configured]')+'</p><p>'+esc(cfg.ethicsNotice||'[Applicable ethics notice not yet configured]')+'</p></div></details>'+ 
+ '<details class="privacy-notice"><summary>Study information and privacy notice</summary><div>'+researchNotice()+'</div></details>'+ 
  '<p style="margin-top:20px">I confirm that I am at least 18 years old, have reviewed the study information, and agree to participate.</p>'+ 
  '<label class="choice"><input type="radio" name="consent" id="consent-check" value="1">Yes, I agree.</label><label class="choice"><input type="radio" name="consent" id="consent-no" value="0">No, I do not agree.</label>'+ 
  '<h2>Prolific ID</h2><label class="input-label" for="pid">Please enter your Prolific ID. This is a study identifier, not your password.</label><input id="pid" type="text" maxlength="64" value="'+esc(urlPid)+'" autocomplete="off" spellcheck="false">'+ 
@@ -143,20 +164,20 @@ async function finish(){if(closing)return;closing=true;document.getElementById('
  try{if(preview){donePreview();return;}if(netPromise){try{await netPromise;}catch(e){/* retry full current snapshot below */}}
   let rounds=0;while(nextBatch().length < T.s.events.filter(e=>e.seq>(S.ack||0)).length){if(++rounds>300)throw new Error('The event record is unusually long. Please contact the researcher.');await sync(true);}
   const r=await sync(true,'finish');if(!r||r.status!=='completed')throw new Error('No final confirmation was returned.');S.phase='done';S.dirty=false;persist();if(releaseTabLock)releaseTabLock();
-  if(!isTest&&cfg.completionConfirmedForThisStudy&&/^https:\/\/app\.prolific\.com\/submissions\/complete\?cc=[A-Za-z0-9]+$/.test(cfg.completionUrl)){location.assign(cfg.completionUrl);}else done();
+  if(!isTest&&canRedirect()){location.assign(cfg.completionUrl);}else done();
  }catch(e){closing=false;root.querySelectorAll('.study-shell input,.clear-answer').forEach(e=>e.disabled=false);document.getElementById('next').disabled=false;const wtp=root.querySelector('[name="wtp1"]');if(wtp&&S.answers.wtp1_declined===1)wtp.disabled=true;if(back)back.disabled=false;msg('Your final submission has NOT been confirmed. '+e.message+' Select Finish to retry, or contact the researcher.','error');scheduleSync();}
 }
 function donePreview(){S.phase='done';persist();done();}
-function done(){cleanupStore();if(T)T.stop();shell('<h1>'+(preview?'Preview complete':'Your responses have been saved')+'</h1><p>'+(preview?'This was a local preview. Nothing was sent to Google or Prolific.':'Thank you for taking part.')+'</p>'+(preview?'<button class="secondary" id="export">Download preview route log</button>':isTest?'<p>Test session complete. This record must not be treated as a research participant.</p>':cfg.completionConfirmedForThisStudy?'<p>Your completion code: <b>'+esc(cfg.completionCode)+'</b></p><a class="primary" href="'+esc(cfg.completionUrl)+'">Return to Prolific</a>':'<p>Please contact the researcher through Prolific.</p>'),'Complete');if(preview)document.getElementById('export').onclick=downloadTrace;}
+function done(){cleanupStore();if(T)T.stop();shell('<h1>'+(preview?'Preview complete':'Your responses have been saved')+'</h1><p>'+(preview?'This was a local preview. Nothing was sent to Google or Prolific.':'Thank you for taking part.')+'</p>'+(preview?'<button class="secondary" id="export">Download preview route log</button>':isTest?'<p>Test session complete. This record must not be treated as a research participant.</p>':canRedirect()?'<p>Your completion code: <b>'+esc(cfg.completionCode)+'</b></p><a class="primary" href="'+esc(cfg.completionUrl)+'">Return to Prolific</a>':'<p>Please contact the researcher through Prolific.</p>'),'Complete');if(preview)document.getElementById('export').onclick=downloadTrace;}
 window.addEventListener('pagehide',()=>{if(T){T.tick();T.stop();}persist();});
 window.addEventListener('pageshow',e=>{if(e.persisted&&S&&S.phase==='browse'&&T)T.begin(true);});
 window.addEventListener('beforeunload',e=>{if(S&&S.phase!=='done'&&S.phase!=='withdrawn'&&S.dirty&&!preview){persist();e.preventDefault();e.returnValue='';}});
 window.addEventListener('error',e=>{if(T&&S&&S.phase!=='done')T.log('technical_error',{kind:'script',message:String(e.message||'Resource failed').slice(0,300)});});
 setInterval(()=>{if(S&&S.phase!=='done'){persist();const el=document.getElementById('live-count');if(el&&T)el.textContent=T.s.totalTransitions;}},5000);
 // Exposed read-only diagnostics for local QA; no credentials or participant identifiers returned.
-window.STUDY_DIAGNOSTICS=()=>S&&T?{build:cfg.build,preview,condition:S.condition,phase:S.phase,qpage:S.qpage,summary:T.snapshot(),events:JSON.parse(JSON.stringify(T.s.events))}:{build:cfg.build,preview};
+window.STUDY_DIAGNOSTICS=()=>S&&T?{build:cfg.build,entryRevision:ENTRY_REVISION,preview,condition:S.condition,phase:S.phase,qpage:S.qpage,summary:T.snapshot(),events:JSON.parse(JSON.stringify(T.s.events))}:{build:cfg.build,entryRevision:ENTRY_REVISION,preview};
 if(design){S=newState('PREVIEW-'+uuid());S.condition=force==='B'?1:0;S.phase='browse';initTrace();showStore();}
-else if(!preview&&(!cfg.apiUrl||(!isTest&&!canCollect()))){shell('<h1>This study is not open yet</h1><p>This is a new, independent study. The researcher must connect a NEW database and complete launch settings before recruitment.</p><p><a href="preview.html">Open local design previews</a></p>','Not collecting data');}
+else if(!preview&&entryProblem()){shell('<h1>Study entry is unavailable</h1><p>'+esc(entryProblem())+'</p><p>If you are already participating, keep your original tab and contact the researcher. Do not change your participant ID.</p><details><summary>Researcher diagnostic</summary><p><a href="deployment-check.html">Check the uploaded configuration</a></p></details>','Entry unavailable');}
 else {
  let tabPid='';try{tabPid=sessionStorage.getItem(NS+'tab_pid')||'';}catch(e){}
  const cached=tabPid&&(!urlPid||urlPid===tabPid)?load(tabPid):null;

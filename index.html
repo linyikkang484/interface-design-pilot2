@@ -1,2 +1,37 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="robots" content="noindex,nofollow"><meta name="study-protocol" content="ameline-pilot2-pl1-pl3-20261017-p01"><title>Website Browsing Study</title><link rel="stylesheet" href="css/main.css"><script defer src="config.js"></script><script defer src="js/content.js"></script><script defer src="js/questions.js"></script><script defer src="js/trace.js"></script><script defer src="js/store.js"></script><script defer src="js/study.js"></script></head><body><div id="app"><p style="margin:40px">Loading the study interface…</p></div><noscript>Please enable JavaScript to use this study, or contact the researcher.</noscript></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light"><meta name="robots" content="noindex,nofollow">
+<meta name="study-protocol" content="ameline-pilot2-pl1-pl3-20261017-p01">
+<meta name="entry-update" content="entryfix-20261018-01">
+<title>Website Browsing Study</title>
+<link rel="stylesheet" href="css/main.css?v=entryfix-20261018-01">
+<script>
+// No backend request is sent by this loader. It reports missing/mixed static files.
+(function(){
+ const failed=[];
+ window.addEventListener('error',function(e){if(e.target&&e.target.tagName==='SCRIPT')failed.push(e.target.getAttribute('src')||'script');},true);
+ window.addEventListener('load',function(){
+  // The application diagnostics is the final init marker; do not send or display credentials.
+  if(typeof window.STUDY_DIAGNOSTICS==='function'&&window.STUDY_DIAGNOSTICS().entryRevision==='entryfix-20261018-01')return;
+  const app=document.getElementById('app');if(!app)return;
+  app.replaceChildren();
+  const main=document.createElement('main');main.style.cssText='max-width:900px;margin:50px auto;padding:24px;font:17px/1.7 system-ui';
+  const h=document.createElement('h1');h.textContent='The website update is incomplete';main.append(h);
+  const p=document.createElement('p');p.textContent='Some website files could not be loaded or belong to another update. Please contact the researcher. This is not evidence of a database failure.';main.append(p);
+  const a=document.createElement('a');a.href='deployment-check.html';a.textContent='Researcher: check the upload';main.append(a);
+  if(failed.length){const pre=document.createElement('pre');pre.style.whiteSpace='pre-wrap';pre.textContent='Files not loaded: '+failed.join(', ');main.append(pre);}
+  app.append(main);
+ });
+})();
+</script>
+<script defer src="config.js?v=entryfix-20261018-01"></script>
+<script defer src="js/content.js?v=entryfix-20261018-01"></script>
+<script defer src="js/questions.js?v=entryfix-20261018-01"></script>
+<script defer src="js/trace.js?v=entryfix-20261018-01"></script>
+<script defer src="js/store.js?v=entryfix-20261018-01"></script>
+<script defer src="js/study.js?v=entryfix-20261018-01"></script>
+</head>
+<body><div id="app"><p style="margin:40px">Loading the study interface…</p></div><noscript>Please enable JavaScript to use this study, or contact the researcher.</noscript></body>
+</html>
